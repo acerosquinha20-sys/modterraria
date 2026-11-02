@@ -5,8 +5,8 @@ object Cfg {
     @Volatile var box = true
     @Volatile var hp = true
     @Volatile var dist = true
-    @Volatile var bicho = true
-    @Volatile var humano = true
     /** quantos blocos cabem na altura da tela (calibragem do tamanho do bloco) */
     @Volatile var tiles = 24f
+    /** limiar de mudanca de pixel: maior = filtra mais */
+    @Volatile var sens = 40
 }

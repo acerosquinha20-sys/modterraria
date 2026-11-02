@@ -133,22 +133,26 @@ class OverlayService : Service() {
             tv.setOnClickListener { set(!get()); paint() }
             panel.addView(tv)
         }
-        row("Linha ESP", { Cfg.line }, { Cfg.line = it })
+        row("Linha (topo)", { Cfg.line }, { Cfg.line = it })
         row("Box ESP", { Cfg.box }, { Cfg.box = it })
         row("Vida", { Cfg.hp }, { Cfg.hp = it })
         row("Distancia", { Cfg.dist }, { Cfg.dist = it })
-        row("Bichos", { Cfg.bicho }, { Cfg.bicho = it })
-        row("Humanos (NPC)", { Cfg.humano }, { Cfg.humano = it })
-        val sizeRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        val sizeLbl = TextView(this).apply { textSize = 12f; setTextColor(0xFFFFFFFF.toInt()); setPadding(dp(6), dp(5), dp(6), dp(5)) }
-        fun paintSize() { sizeLbl.text = "Bloco: ${Cfg.tiles.toInt()}" }
-        fun btnTxt(t: String, d: Float) = TextView(this).apply {
-            text = t; textSize = 16f; setTextColor(0xFF4CFF7A.toInt()); setPadding(dp(10), dp(2), dp(10), dp(2))
-            setOnClickListener { Cfg.tiles = (Cfg.tiles + d).coerceIn(10f, 48f); paintSize() }
+        fun stepper(name: String, show: () -> String, minus: () -> Unit, plus: () -> Unit) {
+            val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            val lbl = TextView(this).apply { textSize = 12f; setTextColor(0xFFFFFFFF.toInt()); setPadding(dp(6), dp(5), dp(6), dp(5)) }
+            fun paint() { lbl.text = "$name: ${show()}" }
+            fun btn(t: String, f: () -> Unit) = TextView(this).apply {
+                text = t; textSize = 16f; setTextColor(0xFF4CFF7A.toInt()); setPadding(dp(10), dp(2), dp(10), dp(2))
+                setOnClickListener { f(); paint() }
+            }
+            paint()
+            r.addView(btn("−", minus)); r.addView(lbl); r.addView(btn("+", plus))
+            panel.addView(r)
         }
-        paintSize()
-        sizeRow.addView(btnTxt("−", 2f)); sizeRow.addView(sizeLbl); sizeRow.addView(btnTxt("+", -2f))
-        panel.addView(sizeRow)
+        stepper("Bloco", { Cfg.tiles.toInt().toString() },
+            { Cfg.tiles = (Cfg.tiles + 2f).coerceIn(10f, 48f) }, { Cfg.tiles = (Cfg.tiles - 2f).coerceIn(10f, 48f) })
+        stepper("Filtro", { Cfg.sens.toString() },
+            { Cfg.sens = (Cfg.sens - 5).coerceIn(20, 80) }, { Cfg.sens = (Cfg.sens + 5).coerceIn(20, 80) })
         panel.addView(TextView(this).apply {
             text = "✕ Sair"; textSize = 12f; setTextColor(0xFFFF5252.toInt())
             setPadding(dp(6), dp(8), dp(6), dp(4))

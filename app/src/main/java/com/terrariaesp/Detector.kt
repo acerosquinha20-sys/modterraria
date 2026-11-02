@@ -6,16 +6,18 @@ import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 
-/** kind: 0 = Humano (NPC/Player), 1 = Bicho */
+/** Humanoide em movimento (NPC/inimigo). */
 class Target(var l: Float, var t: Float, var r: Float, var b: Float) {
     var ttl = 12
     var age = 1
-    var kind = 1
     var hp = -1f
     var dist = 0f
+    var shown = false
+    var x0 = (l + r) / 2
+    var y0 = (t + b) / 2
     val cx get() = (l + r) / 2
     val cy get() = (t + b) / 2
-    fun copy() = Target(l, t, r, b).also { it.kind = kind; it.hp = hp; it.dist = dist; it.ttl = ttl; it.age = age }
+    fun copy() = Target(l, t, r, b).also { it.hp = hp; it.dist = dist; it.ttl = ttl; it.age = age; it.shown = shown }
 }
 
 /**
@@ -33,10 +35,9 @@ class Detector {
 
     private fun lum(c: Int) = (((c shr 16) and 255) * 3 + ((c shr 8) and 255) * 6 + (c and 255)) / 10
 
-    private fun isOverlay(r: Int, g: Int, b: Int) =
-        (r > 170 && b > 170 && g < 120) || (g > 170 && b > 170 && r < 120)
+    private fun isOverlay(r: Int, g: Int, b: Int) = r > 170 && b > 170 && g < 120
 
-    private fun snapshot(): List<Target> = tracks.filter { it.ttl > 0 && it.age >= 3 }.map { it.copy() }
+    private fun snapshot(): List<Target> = tracks.filter { it.ttl > 0 && it.shown }.map { it.copy() }
 
     fun process(
         buf: ByteBuffer, rowStride: Int, pxStride: Int,
@@ -108,7 +109,7 @@ class Detector {
             val px = x - bdx
             val py = y - bdy
             if (px < 0 || py < 0 || px >= sw || py >= sh) continue
-            if (abs(gray[i] - pg[py * sw + px]) > 40) {
+            if (abs(gray[i] - pg[py * sw + px]) > Cfg.sens) {
                 changed++
                 cnt[(y / cs) * gw + x / cs]++
             }
@@ -176,7 +177,8 @@ class Detector {
             val tw = w / tile
             val th = h / tile
             if (tw > 7f || th > 7f || (tw < 0.5f && th < 0.5f)) continue
-            if (th / tw > 6f || tw / th > 6f) continue
+            // formato de humanoide: ~3 blocos de altura, mais alto que largo
+            if (th !in 2f..4.8f || tw !in 0.7f..3.4f || th / tw !in 1.15f..3.6f) continue
             val cells = (w / (cs * sx)) * (h / (cs * sy))
             if (bx[4] / cells < 0.3f) continue
             val bcx = (bx[0] + bx[2]) / 2
@@ -208,10 +210,9 @@ class Detector {
         tracks.removeAll { it.ttl <= 0 }
 
         for (t in tracks) {
-            val tw = (t.r - t.l) / tile
-            val th = (t.b - t.t) / tile
             t.dist = hypot(t.cx - scx, t.cy - scy) / tile
-            t.kind = if (th in 2f..4.6f && tw in 0.8f..3.2f && th / tw in 1.2f..3.4f) 0 else 1
+            // so confirma se durou alguns frames E realmente se deslocou
+            if (!t.shown && t.age >= 3 && hypot(t.cx - t.x0, t.cy - t.y0) >= tile * 0.5f) t.shown = true
             t.hp = health(cur, sw, sh, t, sx, sy)
         }
         return snapshot()

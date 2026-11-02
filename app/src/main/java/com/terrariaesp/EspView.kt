@@ -8,32 +8,25 @@ import android.view.View
 class EspView(c: Context) : View(c) {
     @Volatile private var list: List<Target> = emptyList()
 
-    // cores saturadas e raras no jogo: o detector as ignora para nao se auto-detectar
-    private val MAGENTA = 0xFFFF00FF.toInt()  // Humano
-    private val CIANO = 0xFF00FFFF.toInt()    // Bicho
+    // magenta saturado e raro no jogo: o detector ignora essa cor para nao se auto-detectar
+    private val COR = 0xFFFF00FF.toInt()
 
-    private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 4f }
-    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 26f; isFakeBoldText = true }
+    private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 4f; color = COR }
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = COR }
+    private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 26f; isFakeBoldText = true; color = COR }
 
     fun update(l: List<Target>) { list = l; postInvalidate() }
 
     override fun onDraw(cv: Canvas) {
-        val cx = width / 2f
-        val cy = height / 2f
+        val topX = width / 2f
         for (t in list) {
-            if ((t.kind == 0 && !Cfg.humano) || (t.kind == 1 && !Cfg.bicho)) continue
-            val col = if (t.kind == 0) MAGENTA else CIANO
-            stroke.color = col
-            text.color = col
-            fill.color = col
-            if (Cfg.line) cv.drawLine(cx, cy, t.cx, t.cy, stroke)
+            // linha do TOPO da tela ate o inimigo
+            if (Cfg.line) cv.drawLine(topX, 0f, t.cx, t.t, stroke)
             if (Cfg.box) cv.drawRect(t.l, t.t, t.r, t.b, stroke)
-            var label = if (t.kind == 0) "Humano" else "Bicho"
+            var label = "Humano"
             if (Cfg.dist) label += " ${t.dist.toInt()}m"
             cv.drawText(label, t.l, t.b + 30f, text)
             if (Cfg.hp && t.hp >= 0f) {
-                // barra de vida abaixo do alvo (o detector le a barra do jogo, que fica acima)
                 val w = t.r - t.l
                 cv.drawRect(t.l, t.b + 36f, t.r, t.b + 46f, stroke)
                 cv.drawRect(t.l, t.b + 36f, t.l + w * t.hp, t.b + 46f, fill)
