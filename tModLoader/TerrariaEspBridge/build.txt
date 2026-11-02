@@ -1,0 +1,4 @@
+displayName = Terraria ESP Bridge
+author = Local
+version = 1.0
+description = Sends visible Player and NPC screen data to a LAN Android overlay.

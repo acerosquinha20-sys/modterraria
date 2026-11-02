@@ -1,38 +1,31 @@
-# Terraria ESP (overlay flutuante)
+# Terraria ESP v5 — WiFi/tModLoader
 
-<p align="center"><img src="icon.png" width="140"></p>
+Projeto atualizado com dois modos:
 
-App Android com **botão flutuante pequeno** que marca **só personagens humanoides em movimento** (NPCs/inimigos de forma humana) no Terraria offline:
+1. **WiFi/tModLoader (principal):** um mod local do tModLoader coleta apenas entidades visíveis na câmera do jogador e envia por UDP para o app Android. Não lê memória, não intercepta tráfego do jogo e não altera o cliente.
+2. **Captura local:** o detector antigo por MediaProjection continua disponível como fallback.
 
-- Linha ESP: do **topo da tela** até o alvo
-- Box ESP
-- Vida (experimental)
-- Distância (em blocos aproximados)
-- Botões de ajuste: **Bloco** (tamanho do bloco) e **Filtro** (sensibilidade)
+## Estrutura
 
-## Como funciona
-O app usa captura de tela (MediaProjection) e detecta **o que se move** comparando frames.
-Não lê memória nem modifica o jogo.
+- `app/` — APK Android/overlay.
+- `tModLoader/TerrariaEspBridge/` — mod C# para tModLoader 1.4.4.
 
-## Como filtra (v1.2)
-- Compensa o movimento da câmera.
-- Ignora o próprio overlay (magenta) e o seu personagem no centro.
-- Junta partes próximas e mantém só formas de humanoide (~3 blocos de altura, mais alto que largo).
-- Só mostra alvos que duraram alguns frames e realmente se deslocaram.
-- Calibre **Bloco** até a caixa ficar certa e use **Filtro +** se marcar coisas demais.
+## WiFi
 
-## Limitações (importante)
-- Só vê o que está na tela.
-- "Humano" é decidido pela **forma e tamanho**, não por identificação real.
-- Vida só aparece se o jogo estiver mostrando a barra de vida do inimigo.
-- Para dados 100% precisos (tipo, vida real, fora da tela), o caminho é um mod tModLoader.
+O app escuta UDP na porta **47831**. No arquivo `TerrariaEspBridge.cs`, defina `ReceiverHost` como o IP do telefone na mesma rede WiFi. O mod envia caixas já convertidas para coordenadas de tela, então o app só desenha.
 
-## Gerar o APK pelo GitHub
-1. Crie um repositório e envie todos estes arquivos.
-2. Aba **Actions** > **Build APK** (roda sozinho a cada push).
-3. Ao terminar, baixe o artefato **TerrariaESP-apk** (`app-debug.apk`).
+O pacote usa um protocolo binário simples: magic `0x54535045`, versão 1, quantidade e registros de Player/NPC.
 
-## Usar
-1. Instale o APK, abra o app e toque **Permitir sobreposição**.
-2. Toque **Iniciar ESP** e aceite a captura de tela.
-3. Abra o Terraria. Toque no botão flutuante para abrir/fechar o menu; arraste para mover.
+### tModLoader
+
+A árvore do mod é compatível com a linha 1.4.4. O tModLoader continua mantendo a linha 1.4.4 enquanto 1.4.5 passa por mudanças de API. citeturn199512search0turn199512search1
+
+Para usar: abra o mod em `Mod Sources` no tModLoader, altere `ReceiverHost`, compile/reload e entre no seu mundo.
+
+## Android
+
+Abra o app → permita sobreposição → **Iniciar ESP WiFi**. Não é necessário conceder captura de tela para o modo WiFi.
+
+### GitHub Actions
+
+O workflow existente continua gerando `app-debug.apk`.

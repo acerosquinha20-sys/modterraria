@@ -1,0 +1,1 @@
+Terraria ESP Bridge sends visible entity screen coordinates to a configured LAN receiver for your own worlds/servers.
