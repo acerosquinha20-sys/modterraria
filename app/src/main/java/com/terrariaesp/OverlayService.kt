@@ -67,7 +67,6 @@ class OverlayService : Service() {
         val sh = h / 4
         val scaleX = w.toFloat() / sw
         val scaleY = h.toFloat() / sh
-        val tile = h / 22f
 
         reader = ImageReader.newInstance(sw, sh, PixelFormat.RGBA_8888, 2)
         reader!!.setOnImageAvailableListener({ r ->
@@ -77,7 +76,7 @@ class OverlayService : Service() {
                 if (now - lastRun < 50) return@setOnImageAvailableListener
                 lastRun = now
                 val pl = img.planes[0]
-                val res = detector.process(pl.buffer, pl.rowStride, pl.pixelStride, sw, sh, scaleX, scaleY, tile)
+                val res = detector.process(pl.buffer, pl.rowStride, pl.pixelStride, sw, sh, scaleX, scaleY, h / Cfg.tiles)
                 esp?.update(res)
             } finally { img.close() }
         }, handler)
@@ -138,9 +137,18 @@ class OverlayService : Service() {
         row("Box ESP", { Cfg.box }, { Cfg.box = it })
         row("Vida", { Cfg.hp }, { Cfg.hp = it })
         row("Distancia", { Cfg.dist }, { Cfg.dist = it })
-        row("Animais", { Cfg.animal }, { Cfg.animal = it })
-        row("NPC / Mobs", { Cfg.npc }, { Cfg.npc = it })
-        row("Player", { Cfg.player }, { Cfg.player = it })
+        row("Bichos", { Cfg.bicho }, { Cfg.bicho = it })
+        row("Humanos (NPC)", { Cfg.humano }, { Cfg.humano = it })
+        val sizeRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val sizeLbl = TextView(this).apply { textSize = 12f; setTextColor(0xFFFFFFFF.toInt()); setPadding(dp(6), dp(5), dp(6), dp(5)) }
+        fun paintSize() { sizeLbl.text = "Bloco: ${Cfg.tiles.toInt()}" }
+        fun btnTxt(t: String, d: Float) = TextView(this).apply {
+            text = t; textSize = 16f; setTextColor(0xFF4CFF7A.toInt()); setPadding(dp(10), dp(2), dp(10), dp(2))
+            setOnClickListener { Cfg.tiles = (Cfg.tiles + d).coerceIn(10f, 48f); paintSize() }
+        }
+        paintSize()
+        sizeRow.addView(btnTxt("−", 2f)); sizeRow.addView(sizeLbl); sizeRow.addView(btnTxt("+", -2f))
+        panel.addView(sizeRow)
         panel.addView(TextView(this).apply {
             text = "✕ Sair"; textSize = 12f; setTextColor(0xFFFF5252.toInt())
             setPadding(dp(6), dp(8), dp(6), dp(4))

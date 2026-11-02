@@ -8,7 +8,8 @@ App Android com **botão flutuante pequeno** que abre um mini-menu com:
 - Box ESP
 - Vida (experimental)
 - Distância (em blocos aproximados)
-- Filtros: Animais, NPC/Mobs, Player
+- Filtros: Bichos e Humanos (NPCs)
+- Ajuste de tamanho do bloco (− / +)
 
 Feito para o **Terraria offline (single player)**.
 
@@ -16,10 +17,16 @@ Feito para o **Terraria offline (single player)**.
 O app usa captura de tela (MediaProjection) e detecta **o que se move** comparando frames.
 Não lê memória nem modifica o jogo.
 
+## Como filtra (v1.1)
+- Compensa o movimento da câmera, então andar não gera alvo no cenário todo.
+- Ignora o próprio overlay (cores magenta/ciano) e o próprio personagem no centro.
+- Junta partes próximas, descarta alvos grandes demais, finos demais ou esparsos.
+- Só mostra alvos confirmados por vários frames.
+- **Calibre o botão "Bloco" (− / +)** até os NPCs aparecerem como *Humano*.
+
 ## Limitações (importante)
 - Só vê o que está na tela.
-- Animal / NPC-Mob / Player é separado por **tamanho e posição**, não por identificação real.
-- Quando a câmera anda junto com o player, o fundo também muda e a detecção pausa por instantes.
+- Bicho / Humano é separado por **tamanho e posição**, não por identificação real.
 - Vida só aparece se o jogo estiver mostrando a barra de vida do inimigo.
 - Para dados 100% precisos (tipo, vida real, fora da tela), o caminho é um mod tModLoader.
 
