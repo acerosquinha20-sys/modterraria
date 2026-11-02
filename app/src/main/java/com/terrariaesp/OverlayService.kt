@@ -38,6 +38,7 @@ class OverlayService : Service() {
     private var display: VirtualDisplay? = null
     private var esp: EspView? = null
     private var menu: View? = null
+    private var status: TextView? = null
     private val thread = HandlerThread("capture").apply { start() }
     private val handler by lazy { Handler(thread.looper) }
     private val detector = Detector()
@@ -60,11 +61,14 @@ class OverlayService : Service() {
             addEspLayer()
             addMenu()
             val tick = object : Runnable {
+                var statusAt = 0L
                 override fun run() {
-                    val age = if (udp.lastPacketAt == 0L) Long.MAX_VALUE else System.currentTimeMillis() - udp.lastPacketAt
+                    val nowMs = System.currentTimeMillis()
+                    val age = if (udp.lastPacketAt == 0L) Long.MAX_VALUE else nowMs - udp.lastPacketAt
                     esp?.packetAgeMs = age
-                    if (age < 1500L) esp?.updateNetwork(udp.targets) else esp?.updateNetwork(emptyList())
-                    if (networkOnly && thread.isAlive) handler.postDelayed(this, 50L)
+                    esp?.updateNetwork(udp.snapshot)
+                    if (nowMs - statusAt >= 500L) { statusAt = nowMs; setStatus(age) }
+                    if (thread.isAlive) handler.postDelayed(this, 16L)
                 }
             }
             handler.post(tick)
@@ -99,7 +103,7 @@ class OverlayService : Service() {
                 val res = detector.process(pl.buffer, pl.rowStride, pl.pixelStride, sw, sh, scaleX, scaleY, h / Cfg.tiles)
                 esp?.update(res)
                 esp?.packetAgeMs = System.currentTimeMillis() - udp.lastPacketAt
-                if (Cfg.wifi && udp.lastPacketAt > 0L) esp?.updateNetwork(udp.targets)
+                if (Cfg.wifi && udp.lastPacketAt > 0L) esp?.updateNetwork(udp.snapshot)
             } finally { img.close() }
         }, handler)
         display = projection!!.createVirtualDisplay(
@@ -110,6 +114,12 @@ class OverlayService : Service() {
         addEspLayer()
         addMenu()
         return START_NOT_STICKY
+    }
+
+    private fun setStatus(age: Long) {
+        val v = status ?: return
+        val txt = if (age < 1500L) "Mod conectado - ${udp.pps} pacotes/s" else "Aguardando o mod (UDP 47832)..."
+        v.post { v.text = txt }
     }
 
     private fun startFg(networkOnly: Boolean) {
@@ -191,6 +201,11 @@ class OverlayService : Service() {
         panel.addView(TextView(this).apply {
             text = "Terraria ESP"; textSize = 15f; setTextColor(0xFFFFFFFF.toInt()); paint.isFakeBoldText = true
         })
+        val st = TextView(this).apply {
+            textSize = 11f; setTextColor(0xFF7F8C99.toInt()); text = "Aguardando o mod..."
+        }
+        status = st
+        panel.addView(st)
         section("ESP")
         check("Linha (do topo)", { Cfg.line }, { Cfg.line = it })
         check("Box", { Cfg.box }, { Cfg.box = it })

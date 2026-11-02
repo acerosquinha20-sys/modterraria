@@ -1,7 +1,6 @@
 using Microsoft.Xna.Framework;
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -11,23 +10,51 @@ using Terraria.ModLoader;
 
 namespace TerrariaEspBridge;
 
+/// <summary>
+/// Protocolo v2 (UDP, little-endian), mod -> app, porta 47831:
+///   magic "EPST" (4) | versao=2 (1) | seq u16 | telaW u16 | telaH u16 | count u16
+///   por entidade: kind u8 (0=player, 1=NPC hostil, 2=voce) | id u16 | x,y,w,h f32 (fracao 0..1 da tela do jogo)
+///                 | life i32 | maxLife i32 | distancia em blocos u16 | nomeLen u8 | nome utf8
+/// Coordenadas normalizadas: funcionam com qualquer resolucao/proporcao do celular.
+/// App -> mod, porta 47832: "TESP-HELLO" a cada 1s (o mod descobre o IP do celular sozinho).
+/// </summary>
 public sealed class TerrariaEspBridge : Mod
 {
-    public static TerrariaEspBridge Instance = null!;
+    // Opcional: IP fixo do celular. Deixe "" para descobrir sozinho.
+    public const string ReceiverHost = "";
+    public const int ReceiverPort = 47831;
+    public const int HelloPort = 47832;
+
+    private const int MaxPacket = 1400;      // cabe em 1 pacote WiFi, sem fragmentacao
+    private const int MaxName = 16;
+
     private UdpClient? udp;
     private UdpClient? listener;
     private Thread? thread;
     private volatile bool running;
     private volatile IPEndPoint? receiver;
 
-    // Opcional: IP fixo do celular. Deixe "" para descobrir sozinho (o app avisa o IP por broadcast).
-    public const string ReceiverHost = "";
-    public const int ReceiverPort = 47831;   // mod -> app (entidades)
-    public const int HelloPort = 47832;      // app -> mod ("TESP-HELLO")
+    private readonly byte[] buf = new byte[MaxPacket];
+    private readonly List<Ent> ents = new List<Ent>(128);
+    private readonly Dictionary<int, byte[]> npcNames = new Dictionary<int, byte[]>();
+    private readonly string?[] playerNameCache = new string?[256];
+    private readonly byte[]?[] playerNameBytes = new byte[256][];
+    private ushort seq;
+    private uint lastSentTick;
+    private int lastCount;
+
+    private struct Ent
+    {
+        public byte Kind;
+        public int Id;
+        public float X, Y, W, H;
+        public int Life, MaxLife;
+        public int Dist;
+        public byte[]? Name;
+    }
 
     public override void Load()
     {
-        Instance = this;
         if (Main.dedServ)
             return;
         try
@@ -36,9 +63,9 @@ public sealed class TerrariaEspBridge : Mod
                 receiver = new IPEndPoint(IPAddress.Parse(ReceiverHost), ReceiverPort);
             udp = new UdpClient();
             running = true;
-            thread = new Thread(ReceiveLoop) { IsBackground = true, Name = "TerrariaEspBridge-UDP" };
+            thread = new Thread(HelloLoop) { IsBackground = true, Name = "TerrariaEspBridge-UDP" };
             thread.Start();
-            Logger.Info($"Terraria ESP Bridge: aguardando o app (UDP {HelloPort}) / enviando para porta {ReceiverPort}");
+            Logger.Info("Terraria ESP Bridge: aguardando o app (UDP " + HelloPort + ")");
         }
         catch (Exception ex)
         {
@@ -55,12 +82,11 @@ public sealed class TerrariaEspBridge : Mod
         listener = null;
         thread = null;
         receiver = null;
-        Instance = null!;
     }
 
-    private void ReceiveLoop()
+    // Escuta o "TESP-HELLO" do app e passa a enviar os dados para o IP de quem mandou.
+    private void HelloLoop()
     {
-        // Escuta o "TESP-HELLO" do app e passa a enviar os dados para o IP de quem mandou.
         try
         {
             listener = new UdpClient(AddressFamily.InterNetwork);
@@ -74,7 +100,8 @@ public sealed class TerrariaEspBridge : Mod
                 if (Encoding.UTF8.GetString(data) != "TESP-HELLO")
                     continue;
                 var ep = new IPEndPoint(from.Address, ReceiverPort);
-                if (receiver == null || !receiver.Equals(ep))
+                var cur = receiver;
+                if (cur == null || !cur.Equals(ep))
                 {
                     receiver = ep;
                     Logger.Info("Terraria ESP Bridge: app encontrado em " + ep);
@@ -90,45 +117,27 @@ public sealed class TerrariaEspBridge : Mod
 
     public override void PostUpdateEverything()
     {
-        if (Main.dedServ || !running || udp == null || receiver == null)
-            return; // sem app conectado ainda
-        if (Main.gameMenu || Main.LocalPlayer == null || !Main.LocalPlayer.active)
+        if (Main.dedServ || !running || udp == null)
             return;
-        if ((Main.GameUpdateCount % 3) != 0)
+        IPEndPoint? target = receiver;
+        if (target == null)
+            return;
+        if (Main.gameMenu || Main.LocalPlayer == null || !Main.LocalPlayer.active)
             return;
 
         try
         {
-            var list = new List<EntityRecord>(64);
-            Vector2 camera = Main.screenPosition;
-            Rectangle screen = new(0, 0, Main.screenWidth, Main.screenHeight);
+            Collect();
 
-            // Players visible to this client.
-            for (int i = 0; i < Main.maxPlayers; i++)
-            {
-                Player p = Main.player[i];
-                if (!p.active || p.dead)
-                    continue;
-                Rectangle hit = p.Hitbox;
-                Vector2 screenPos = p.position - camera;
-                Rectangle sr = new((int)screenPos.X, (int)screenPos.Y, hit.Width, hit.Height);
-                if (screen.Intersects(sr))
-                    list.Add(new EntityRecord(0, i, screenPos.X, screenPos.Y, hit.Width, hit.Height, p.statLife, p.statLifeMax2, p.name));
-            }
+            // Sem entidades: manda 1 pacote vazio ao esvaziar e depois so um "batimento" 4x/s.
+            uint tick = Main.GameUpdateCount;
+            if (ents.Count == 0 && lastCount == 0 && tick - lastSentTick < 15u)
+                return;
+            lastSentTick = tick;
+            lastCount = ents.Count;
 
-            // NPCs visible to this client.
-            for (int i = 0; i < Main.maxNPCs; i++)
-            {
-                NPC n = Main.npc[i];
-                if (!n.active || n.friendly || n.lifeMax <= 0)
-                    continue;
-                Vector2 screenPos = n.position - camera;
-                Rectangle sr = new((int)screenPos.X, (int)screenPos.Y, n.width, n.height);
-                if (screen.Intersects(sr))
-                    list.Add(new EntityRecord(1, i, screenPos.X, screenPos.Y, n.width, n.height, n.life, n.lifeMax, n.FullName));
-            }
-
-            Send(list);
+            int len = Encode();
+            udp.Send(buf, len, target);
         }
         catch (Exception ex)
         {
@@ -136,47 +145,134 @@ public sealed class TerrariaEspBridge : Mod
         }
     }
 
-    private void Send(List<EntityRecord> entities)
+    private void Collect()
     {
-        var target = receiver;
-        if (udp == null || target == null)
-            return;
-        using var ms = new MemoryStream(2048);
-        using var bw = new BinaryWriter(ms, Encoding.UTF8, true);
-        bw.Write(0x54535045u); // Android reads little-endian: 45 50 53 54
-        bw.Write((byte)1);
-        bw.Write((ushort)Math.Min(entities.Count, 512));
-        int count = Math.Min(entities.Count, 512);
-        for (int i = 0; i < count; i++)
+        ents.Clear();
+        float sw = Math.Max(1, Main.screenWidth);
+        float sh = Math.Max(1, Main.screenHeight);
+        Vector2 camera = Main.screenPosition;
+        Vector2 me = Main.LocalPlayer.Center;
+        Rectangle screen = new Rectangle(0, 0, Main.screenWidth, Main.screenHeight);
+
+        for (int i = 0; i < Main.maxPlayers && i < 256; i++)
         {
-            var e = entities[i];
-            bw.Write((byte)e.Kind);
-            bw.Write((ushort)e.Id);
-            bw.Write(e.X);
-            bw.Write(e.Y);
-            bw.Write(e.W);
-            bw.Write(e.H);
-            bw.Write(e.Life);
-            bw.Write(e.MaxLife);
-            byte[] name = Encoding.UTF8.GetBytes(e.Name ?? "");
-            int len = Math.Min(name.Length, 255);
-            bw.Write((byte)len);
-            bw.Write(name, 0, len);
+            Player p = Main.player[i];
+            if (!p.active || p.dead)
+                continue;
+            Vector2 sp = p.position - camera;
+            Rectangle sr = new Rectangle((int)sp.X, (int)sp.Y, p.width, p.height);
+            if (!screen.Intersects(sr))
+                continue;
+            if (playerNameCache[i] != p.name)
+            {
+                playerNameCache[i] = p.name;
+                playerNameBytes[i] = EncodeName(p.name);
+            }
+            ents.Add(new Ent
+            {
+                Kind = (byte)(i == Main.myPlayer ? 2 : 0),
+                Id = i,
+                X = sp.X / sw, Y = sp.Y / sh, W = p.width / sw, H = p.height / sh,
+                Life = p.statLife, MaxLife = p.statLifeMax2,
+                Dist = (int)(Vector2.Distance(p.Center, me) / 16f),
+                Name = playerNameBytes[i]
+            });
         }
-        bw.Flush();
-        byte[] data = ms.ToArray();
-        udp.Send(data, data.Length, target);
+
+        for (int i = 0; i < Main.maxNPCs; i++)
+        {
+            NPC n = Main.npc[i];
+            if (!n.active || n.friendly || n.lifeMax <= 0)
+                continue;
+            Vector2 sp = n.position - camera;
+            Rectangle sr = new Rectangle((int)sp.X, (int)sp.Y, n.width, n.height);
+            if (!screen.Intersects(sr))
+                continue;
+            if (!npcNames.TryGetValue(n.type, out byte[]? name))
+            {
+                name = EncodeName(n.FullName);
+                npcNames[n.type] = name;
+            }
+            ents.Add(new Ent
+            {
+                Kind = 1,
+                Id = i,
+                X = sp.X / sw, Y = sp.Y / sh, W = n.width / sw, H = n.height / sh,
+                Life = n.life, MaxLife = n.lifeMax,
+                Dist = (int)(Vector2.Distance(n.Center, me) / 16f),
+                Name = name
+            });
+        }
+
+        // Se nao couber tudo em 1 pacote, os mais proximos tem prioridade.
+        ents.Sort(CompareDist);
     }
 
-    private sealed class EntityRecord
+    private static int CompareDist(Ent a, Ent b) => a.Dist.CompareTo(b.Dist);
+
+    private static byte[] EncodeName(string? s)
     {
-        public int Kind, Id;
-        public float X, Y, W, H;
-        public int Life, MaxLife;
-        public string Name;
-        public EntityRecord(int kind, int id, float x, float y, float w, float h, int life, int maxLife, string name)
+        if (string.IsNullOrEmpty(s))
+            return Array.Empty<byte>();
+        if (s.Length > MaxName)
+            s = s.Substring(0, MaxName);
+        return Encoding.UTF8.GetBytes(s);
+    }
+
+    private int Encode()
+    {
+        byte[] b = buf;
+        int o = 0;
+        PutI32(b, ref o, 0x54535045);
+        b[o++] = 2;
+        PutU16(b, ref o, seq++);
+        PutU16(b, ref o, Main.screenWidth);
+        PutU16(b, ref o, Main.screenHeight);
+        int countPos = o;
+        PutU16(b, ref o, 0);
+
+        int written = 0;
+        for (int i = 0; i < ents.Count; i++)
         {
-            Kind = kind; Id = id; X = x; Y = y; W = w; H = h; Life = life; MaxLife = maxLife; Name = name;
+            Ent e = ents[i];
+            byte[] name = e.Name ?? Array.Empty<byte>();
+            if (o + 30 + name.Length > MaxPacket)
+                break;
+            b[o++] = e.Kind;
+            PutU16(b, ref o, e.Id);
+            PutF32(b, ref o, e.X);
+            PutF32(b, ref o, e.Y);
+            PutF32(b, ref o, e.W);
+            PutF32(b, ref o, e.H);
+            PutI32(b, ref o, e.Life);
+            PutI32(b, ref o, e.MaxLife);
+            PutU16(b, ref o, Math.Min(e.Dist, 65535));
+            b[o++] = (byte)name.Length;
+            Buffer.BlockCopy(name, 0, b, o, name.Length);
+            o += name.Length;
+            written++;
         }
+        b[countPos] = (byte)written;
+        b[countPos + 1] = (byte)(written >> 8);
+        return o;
+    }
+
+    private static void PutU16(byte[] b, ref int o, int v)
+    {
+        b[o++] = (byte)v;
+        b[o++] = (byte)(v >> 8);
+    }
+
+    private static void PutI32(byte[] b, ref int o, int v)
+    {
+        b[o++] = (byte)v;
+        b[o++] = (byte)(v >> 8);
+        b[o++] = (byte)(v >> 16);
+        b[o++] = (byte)(v >> 24);
+    }
+
+    private static void PutF32(byte[] b, ref int o, float f)
+    {
+        PutI32(b, ref o, BitConverter.SingleToInt32Bits(f));
     }
 }

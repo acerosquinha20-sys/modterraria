@@ -4,11 +4,10 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.view.View
-import kotlin.math.hypot
 
 class EspView(c: Context) : View(c) {
     @Volatile private var list: List<Target> = emptyList()
-    @Volatile private var netList: List<NetTarget> = emptyList()
+    @Volatile private var snap: NetSnapshot? = null
     @Volatile var packetAgeMs: Long = Long.MAX_VALUE
 
     private val COR = 0xFFFF00FF.toInt()
@@ -17,29 +16,32 @@ class EspView(c: Context) : View(c) {
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 26f; isFakeBoldText = true; color = COR }
 
     fun update(l: List<Target>) { list = l; postInvalidate() }
-    fun updateNetwork(l: List<NetTarget>) { netList = l; postInvalidate() }
+    fun updateNetwork(s: NetSnapshot?) { snap = s; postInvalidate() }
 
     override fun onDraw(cv: Canvas) {
         if (Cfg.wifi && packetAgeMs < 1500L) drawNetwork(cv)
         else if (!Cfg.wifi) drawLegacy(cv)
     }
 
+    /** Desenha os alvos do mod. As posicoes sao previstas ate 40 ms a frente (velocidade do ultimo pacote). */
     private fun drawNetwork(cv: Canvas) {
-        val centerX = width / 2f
-        for (t in netList) {
+        val s = snap ?: return
+        val w = width.toFloat()
+        val h = height.toFloat()
+        val ahead = (System.nanoTime() / 1_000_000L - s.atMs).coerceIn(0L, 40L).toFloat()
+        val centerX = w / 2f
+        for (t in s.targets) {
+            if (t.kind == 2 && !Cfg.self) continue
             if (t.kind == 1 && !Cfg.humano) continue
-            val l = t.x.coerceIn(-500f, width + 500f)
-            val top = t.y.coerceIn(-500f, height + 500f)
-            val r = l + t.w
-            val b = top + t.h
-            if (Cfg.line) cv.drawLine(centerX, 0f, (l + r) / 2f, top, stroke)
+            val l = (t.x + t.vx * ahead) * w
+            val top = (t.y + t.vy * ahead) * h
+            val r = l + t.w * w
+            val b = top + t.h * h
+            if (Cfg.line && t.kind != 2) cv.drawLine(centerX, 0f, (l + r) / 2f, top, stroke)
             if (Cfg.box) cv.drawRect(l, top, r, b, stroke)
-            var label = if (t.kind == 0) "Player" else "NPC"
+            var label = if (t.kind == 2) "Eu" else if (t.kind == 0) "Player" else "NPC"
             if (Cfg.names && t.name.isNotBlank()) label += " ${t.name}"
-            if (Cfg.dist) {
-                val d = hypot((l + r) / 2f - centerX, (top + b) / 2f - height / 2f) / (height / Cfg.tiles)
-                label += " ${d.toInt()}m"
-            }
+            if (Cfg.dist && t.kind != 2) label += " ${t.dist}m"
             cv.drawText(label, l, b + 30f, text)
             if (Cfg.hp && t.maxLife > 0) {
                 val ratio = (t.life.toFloat() / t.maxLife).coerceIn(0f, 1f)
