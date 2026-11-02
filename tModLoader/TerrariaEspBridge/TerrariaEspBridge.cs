@@ -15,13 +15,15 @@ public sealed class TerrariaEspBridge : Mod
 {
     public static TerrariaEspBridge Instance = null!;
     private UdpClient? udp;
+    private UdpClient? listener;
     private Thread? thread;
     private volatile bool running;
-    private IPEndPoint? receiver;
+    private volatile IPEndPoint? receiver;
 
-    // Set this to the Android phone's LAN IP. Both devices must be on the same WiFi.
-    public const string ReceiverHost = "192.168.1.100";
-    public const int ReceiverPort = 47831;
+    // Opcional: IP fixo do celular. Deixe "" para descobrir sozinho (o app avisa o IP por broadcast).
+    public const string ReceiverHost = "";
+    public const int ReceiverPort = 47831;   // mod -> app (entidades)
+    public const int HelloPort = 47832;      // app -> mod ("TESP-HELLO")
 
     public override void Load()
     {
@@ -30,12 +32,13 @@ public sealed class TerrariaEspBridge : Mod
             return;
         try
         {
-            receiver = new IPEndPoint(IPAddress.Parse(ReceiverHost), ReceiverPort);
+            if (ReceiverHost.Length > 0)
+                receiver = new IPEndPoint(IPAddress.Parse(ReceiverHost), ReceiverPort);
             udp = new UdpClient();
             running = true;
             thread = new Thread(ReceiveLoop) { IsBackground = true, Name = "TerrariaEspBridge-UDP" };
             thread.Start();
-            Logger.Info($"Terraria ESP Bridge: UDP receiver {ReceiverHost}:{ReceiverPort}");
+            Logger.Info($"Terraria ESP Bridge: aguardando o app (UDP {HelloPort}) / enviando para porta {ReceiverPort}");
         }
         catch (Exception ex)
         {
@@ -47,7 +50,9 @@ public sealed class TerrariaEspBridge : Mod
     {
         running = false;
         try { udp?.Close(); } catch { }
+        try { listener?.Close(); } catch { }
         udp = null;
+        listener = null;
         thread = null;
         receiver = null;
         Instance = null!;
@@ -55,16 +60,38 @@ public sealed class TerrariaEspBridge : Mod
 
     private void ReceiveLoop()
     {
-        // The Android app does not need to be contacted first; this socket only keeps
-        // the bridge independent from Terraria's game-network protocol.
-        while (running)
-            Thread.Sleep(250);
+        // Escuta o "TESP-HELLO" do app e passa a enviar os dados para o IP de quem mandou.
+        try
+        {
+            listener = new UdpClient(AddressFamily.InterNetwork);
+            listener.ExclusiveAddressUse = false;
+            listener.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+            listener.Client.Bind(new IPEndPoint(IPAddress.Any, HelloPort));
+            while (running)
+            {
+                var from = new IPEndPoint(IPAddress.Any, 0);
+                byte[] data = listener.Receive(ref from);
+                if (Encoding.UTF8.GetString(data) != "TESP-HELLO")
+                    continue;
+                var ep = new IPEndPoint(from.Address, ReceiverPort);
+                if (receiver == null || !receiver.Equals(ep))
+                {
+                    receiver = ep;
+                    Logger.Info("Terraria ESP Bridge: app encontrado em " + ep);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            if (running)
+                Logger.Warn("ESP bridge listener stopped: " + ex.Message);
+        }
     }
 
     public override void PostUpdateEverything()
     {
         if (Main.dedServ || !running || udp == null || receiver == null)
-            return;
+            return; // sem app conectado ainda
         if (Main.gameMenu || Main.LocalPlayer == null || !Main.LocalPlayer.active)
             return;
         if ((Main.GameUpdateCount % 3) != 0)
@@ -111,7 +138,8 @@ public sealed class TerrariaEspBridge : Mod
 
     private void Send(List<EntityRecord> entities)
     {
-        if (udp == null || receiver == null)
+        var target = receiver;
+        if (udp == null || target == null)
             return;
         using var ms = new MemoryStream(2048);
         using var bw = new BinaryWriter(ms, Encoding.UTF8, true);
@@ -137,7 +165,7 @@ public sealed class TerrariaEspBridge : Mod
         }
         bw.Flush();
         byte[] data = ms.ToArray();
-        udp.Send(data, data.Length, receiver);
+        udp.Send(data, data.Length, target);
     }
 
     private sealed class EntityRecord
