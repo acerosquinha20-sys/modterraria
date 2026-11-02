@@ -189,7 +189,7 @@ class OverlayService : Service() {
         }
 
         panel.addView(TextView(this).apply {
-            text = "Terraria ESP"; textSize = 15f; setTextColor(0xFFFFFFFF.toInt()); isFakeBoldText = true
+            text = "Terraria ESP"; textSize = 15f; setTextColor(0xFFFFFFFF.toInt()); paint.isFakeBoldText = true
         })
         section("ESP")
         check("Linha (do topo)", { Cfg.line }, { Cfg.line = it })

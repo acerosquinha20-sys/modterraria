@@ -29,7 +29,7 @@ class UdpReceiver(private val port: Int = 47831, private val helloPort: Int = 47
         if (!running.compareAndSet(false, true)) return
         thread = Thread {
             try {
-                val s = DatagramSocket(null)
+                val s = DatagramSocket(null as java.net.SocketAddress?)
                 s.reuseAddress = true
                 s.bind(java.net.InetSocketAddress(port))
                 s.broadcast = true
